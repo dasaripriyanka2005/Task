@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Travel Explorer — Mini Trip Finder & Itinerary Builder</title>
+<style>
+  :root{
+    --bg:#0f1724; --card:#0b1220; --muted:#9aa4b2; --accent:#7c5cff; --glass: rgba(255,255,255,0.03);
+    --radius:12px; color-scheme: dark;
+  }
+  *{box-sizing:border-box}
+  body{margin:0; font-family:Inter,system-ui,Segoe UI,Roboto,Arial; background:linear-gradient(180deg,#071021,#07182a); color:#e6eef6; padding:20px}
+  header{display:flex;gap:14px;align-items:center;margin-bottom:18px}
+  .logo{width:56px;height:56px;border-radius:12px;background:linear-gradient(135deg,var(--accent),#2bd4bf);display:flex;align-items:center;justify-content:center;font-weight:800}
+  h1{margin:0;font-size:20px}
+  .lead{margin:0;color:var(--muted);font-size:13px}
+  .layout{display:grid;grid-template-columns:1fr 380px;gap:18px}
+  @media (max-width:900px){ .layout{grid-template-columns:1fr} aside{order:2} }
+
+  /* Left: search & results & map placeholder */
+  .panel{background:var(--card);border-radius:var(--radius);padding:14px}
+  .search-row{display:flex;gap:8px;align-items:center}
+  input[type=text],select{flex:1;padding:10px;border-radius:10px;border:0;background:var(--glass);color:inherit}
+  .btn{background:var(--glass);border:0;padding:9px 12px;border-radius:10px;color:inherit;cursor:pointer;font-weight:700}
+  .filters{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .chip{padding:6px 10px;border-radius:999px;background:rgba(255,255,255,0.02);cursor:pointer;border:1px solid rgba(255,255,255,0.02)}
+  .results{margin-top:12px;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+  .place{background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent);padding:12px;border-radius:10px;min-height:120px;display:flex;flex-direction:column;gap:8px}
+  .place h3{margin:0;font-size:15px}
+  .meta{font-size:12px;color:var(--muted);display:flex;justify-content:space-between;gap:8px}
+  .tag{padding:4px 6px;border-radius:6px;background:rgba(255,255,255,0.03);font-size:12px}
+
+  /* Right: itinerary */
+  aside{min-height:520px}
+  .itinerary-header{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .itinerary-list{margin-top:12px;display:flex;flex-direction:column;gap:8px;min-height:200px}
+  .it-item{background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent);padding:10px;border-radius:10px;display:flex;align-items:center;gap:10px;cursor:grab}
+  .drag-handle{font-weight:800;opacity:0.7}
+  .item-info{flex:1}
+  .small{font-size:12px;color:var(--muted)}
+  .summary{margin-top:12px;color:var(--muted);font-size:13px}
+  .controls{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+
+  footer{margin-top:14px;color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">TE</div>
+  <div>
+    <h1>Travel Explorer</h1>
+    <p class="lead">Search places, filter by interest, build your half-day itinerary by dragging items.</p>
+  </div>
+</header>
+
+<div class="layout">
+  <main>
+    <div class="panel" id="searchPanel">
+      <div class="search-row">
+        <input type="text" id="q" placeholder="Search city or place (e.g. Barcelona, Cathedral, coffee)"/>
+        <button class="btn" id="searchBtn">Search</button>
+      </div>
+
+      <div class="filters" id="filters">
+        <!-- chips injected -->
+      </div>
+
+      <div class="panel" style="margin-top:12px;padding:10px">
+        <strong class="small">Results</strong>
+        <div class="results" id="results"></div>
+      </div>
+
+      <div style="margin-top:12px" class="panel">
+        <strong class="small">Map preview (mock)</strong>
+        <div style="height:160px;border-radius:10px;background:linear-gradient(135deg,rgba(255,255,255,0.02),transparent);display:flex;align-items:center;justify-content:center;color:var(--muted)">
+          (Interactive map can be added with an API)
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <aside>
+    <div class="panel">
+      <div class="itinerary-header">
+        <div>
+          <strong>Itinerary (half-day)</strong>
+          <div class="small">Drag to reorder • Remove to adjust time</div>
+        </div>
+        <div class="small" id="totalTime">Total: 0 min</div>
+      </div>
+
+      <div class="itinerary-list" id="itList" ondragover="event.preventDefault()"></div>
+
+      <div class="summary" id="conflicts"></div>
+
+      <div class="controls">
+        <button class="btn" id="clearIt">Clear</button>
+        <button class="btn" id="saveIt">Save</button>
+        <button class="btn" id="loadIt">Load</button>
+        <button class="btn" id="exportIt">Export JSON</button>
+        <label style="display:flex;gap:8px;align-items:center;">
+          <input type="file" id="importFile" style="display:none">
+          <button class="btn" id="importBtn">Import JSON</button>
+        </label>
+      </div>
+
+      <footer>
+        Tip: use search + filters to find spots quickly. This demo uses a local sample dataset.
+      </footer>
+    </div>
+  </aside>
+</div>
+
+<script>
+/* ----- Sample dataset (offline) ----- */
+const SAMPLE_CITY = "Barcelona";
+const PLACES = [
+  { id:'s1', city:'Barcelona', name:'Sagrada Família', cat:['culture','architecture'], dur:90, desc:'Gaudí masterpiece; expect long lines.' },
+  { id:'s2', city:'Barcelona', name:'Gothic Quarter Walk', cat:['culture','history','food'], dur:60, desc:'Narrow streets, cafés, and hidden squares.' },
+  { id:'s3', city:'Barcelona', name:'La Boqueria Market', cat:['food'], dur:45, desc:'Vibrant food market with tapas stalls.' },
+  { id:'s4', city:'Barcelona', name:'Park Güell', cat:['nature','architecture'], dur:75, desc:'Colorful park with city views.' },
+  { id:'s5', city:'Barcelona', name:'Barceloneta Beach', cat:['nature','relax'], dur:120, desc:'Sun, sand, and seaside bars.' },
+  { id:'s6', city:'Barcelona', name:'Picasso Museum', cat:['culture','art'], dur:70, desc:'Extensive Picasso collection.' },
+  { id:'s7', city:'Barcelona', name:'Montjuïc Cable Car', cat:['views','adventure'], dur:50, desc:'Cable car up to Montjuïc hill.' },
+  { id:'s8', city:'Barcelona', name:'El Raval Coffee Crawl', cat:['food','nightlife'], dur:40, desc:'A selection of specialty cafés.' },
+  { id:'s9', city:'Barcelona', name:'Tapas & Wine Evening', cat:['food','nightlife'], dur:150, desc:'Sample local food across bars.' },
+  { id:'s10', city:'Barcelona', name:'Casa Batlló', cat:['architecture','culture'], dur:55, desc:'Gaudí’s iconic building with interiors.' }
+];
+
+/* ----- Application state ----- */
+let filters = ['food','nature','culture','nightlife','architecture','history','views','relax','art','adventure'];
+let activeFilters = new Set(); // unchecked = no filter; checked = include
+let currentResults = []; // filtered results
+let itinerary = []; // array of place objects (shallow clones)
+
+/* ----- UI hooks ----- */
+const resultsEl = document.getElementById('results');
+const filtersEl = document.getElementById('filters');
+const qEl = document.getElementById('q');
+const itList = document.getElementById('itList');
+const totalTimeEl = document.getElementById('totalTime');
+const conflictsEl = document.getElementById('conflicts');
+
+/* ----- Init filters UI ----- */
+function renderFilters(){
+  filtersEl.innerHTML = '';
+  for (const f of filters){
+    const btn = document.createElement('button');
+    btn.className = 'chip';
+    btn.textContent = f;
+    btn.dataset.tag = f;
+    btn.addEventListener('click', ()=> {
+      if (activeFilters.has(f)){ activeFilters.delete(f); btn.style.background='rgba(255,255,255,0.02)'; }
+      else { activeFilters.add(f); btn.style.background='linear-gradient(90deg,var(--accent),#2bd4bf)'; }
+      doSearch();
+    });
+    filtersEl.appendChild(btn);
+  }
+}
+renderFilters();
+
+/* ----- Search & filtering ----- */
+function doSearch(){
+  const q = qEl.value.trim().toLowerCase();
+  // filter by city or keyword & by activeFilters if any
+  currentResults = PLACES.filter(p=>{
+    const matchQ = (!q) || p.city.toLowerCase().includes(q) || p.name.toLowerCase().includes(q) || p.desc.toLowerCase().includes(q);
+    if (!matchQ) return false;
+    if (activeFilters.size === 0) return true;
+    for (const t of activeFilters){
+      if (p.cat.includes(t)) return true;
+    }
+    return false;
+  });
+  renderResults();
+}
+
+/* ----- Results UI ----- */
+function renderResults(){
+  resultsEl.innerHTML = '';
+  if (currentResults.length === 0){
+    const emp = document.createElement('div'); emp.style.color='var(--muted)'; emp.textContent='No results — try a broader search or clear filters.'; resultsEl.appendChild(emp); return;
+  }
+  currentResults.forEach(p=>{
+    const card = document.createElement('div'); card.className='place';
+    const title = document.createElement('h3'); title.textContent = p.name;
+    const meta = document.createElement('div'); meta.className='meta';
+    const tagWrap = document.createElement('div'); p.cat.forEach(c=>{ const sp = document.createElement('span'); sp.className='tag'; sp.textContent = c; sp.style.marginRight='6px'; tagWrap.appendChild(sp); });
+    const dur = document.createElement('div'); dur.className='small'; dur.textContent = p.dur + ' min';
+    meta.appendChild(tagWrap); meta.appendChild(dur);
+    const desc = document.createElement('div'); desc.className='small'; desc.textContent = p.desc;
+    const foot = document.createElement('div'); foot.style.marginTop='auto'; foot.style.display='flex'; foot.style.justifyContent='space-between';
+    const addBtn = document.createElement('button'); addBtn.className='btn'; addBtn.textContent='Add to itinerary';
+    addBtn.onclick = ()=> addToItinerary(p.id);
+    foot.appendChild(addBtn);
+    card.appendChild(title); card.appendChild(meta); card.appendChild(desc); card.appendChild(foot);
+    resultsEl.appendChild(card);
+  });
+}
+
+/* ----- Itinerary operations ----- */
+function addToItinerary(placeId){
+  const p = PLACES.find(x=>x.id===placeId);
+  if (!p) return;
+  // shallow clone to allow per-item notes (if needed)
+  const item = {...p, uuid: 'it' + Date.now() + Math.floor(Math.random()*1000)};
+  itinerary.push(item);
+  renderItinerary();
+  saveItineraryToLocal();
+}
+
+function renderItinerary(){
+  itList.innerHTML = '';
+  itinerary.forEach((it, idx)=>{
+    const el = document.createElement('div'); el.className='it-item'; el.draggable=true; el.dataset.uuid = it.uuid;
+    el.addEventListener('dragstart', onDragStart);
+    el.addEventListener('dragover', e=>e.preventDefault());
+    el.addEventListener('drop', onDropOnItem);
+
+    const handle = document.createElement('div'); handle.className='drag-handle'; handle.textContent='☰';
+    const info = document.createElement('div'); info.className='item-info';
+    const name = document.createElement('div'); name.textContent = it.name;
+    const small = document.createElement('div'); small.className='small'; small.textContent = it.cat.join(' • ') + ' • ' + it.dur + ' min';
+    info.appendChild(name); info.appendChild(small);
+
+    const btns = document.createElement('div');
+    const rem = document.createElement('button'); rem.className='btn'; rem.textContent='Remove';
+    rem.onclick = ()=> { itinerary = itinerary.filter(x=>x.uuid !== it.uuid); renderItinerary(); saveItineraryToLocal(); };
+    btns.appendChild(rem);
+
+    el.appendChild(handle); el.appendChild(info); el.appendChild(btns);
+    itList.appendChild(el);
+  });
+  updateSummary();
+}
+
+/* ----- Drag & Drop reorder handlers ----- */
+let draggingUuid = null;
+function onDragStart(e){
+  draggingUuid = e.currentTarget.dataset.uuid;
+  e.dataTransfer.setData('text/plain', draggingUuid);
+  e.dataTransfer.effectAllowed = 'move';
+}
+function onDropOnItem(e){
+  const targetUuid = e.currentTarget.dataset.uuid;
+  const from = itinerary.findIndex(it => it.uuid === draggingUuid);
+  const to = itinerary.findIndex(it => it.uuid === targetUuid);
+  if (from === -1 || to === -1 || from === to) { draggingUuid = null; return; }
+  const [item] = itinerary.splice(from, 1);
+  itinerary.splice(to, 0, item);
+  renderItinerary();
+  saveItineraryToLocal();
+  draggingUuid = null;
+}
+
+/* ----- Summary & conflict detection ----- */
+function updateSummary(){
+  const total = itinerary.reduce((s,it)=>s+ (it.dur||0), 0);
+  totalTimeEl.textContent = 'Total: ' + total + ' min';
+  // simple overlap detection: if total > 240 (half-day = 4 hours), flag
+  if (total > 240){
+    conflictsEl.textContent = 'Warning: itinerary exceeds 4 hours (half-day). Consider removing items or splitting into another day.';
+    conflictsEl.style.color = '#ffb4b4';
+  } else {
+    conflictsEl.textContent = '';
+  }
+}
+
+/* ----- Persistence: Save / Load / Export / Import ----- */
+function saveItineraryToLocal(){
+  try {
+    const payload = {city: SAMPLE_CITY, created: (new Date()).toISOString(), itinerary};
+    localStorage.setItem('travel_explorer_itinerary', JSON.stringify(payload));
+  } catch(e){ console.warn('save failed', e); }
+}
+function loadItineraryFromLocal(){
+  try{
+    const s = localStorage.getItem('travel_explorer_itinerary');
+    if (!s) { alert('No saved itinerary found'); return; }
+    const payload = JSON.parse(s);
+    itinerary = payload.itinerary || [];
+    renderItinerary();
+  }catch(e){ alert('Load failed'); }
+}
+function exportItinerary(){
+  const data = {meta:{city:SAMPLE_CITY, exported:(new Date()).toISOString()}, itinerary};
+  const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = 'itinerary.json'; a.click();
+  URL.revokeObjectURL(url);
+}
+function importItinerary(file){
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (!data.itinerary) return alert('Invalid file (no itinerary array found)');
+      itinerary = data.itinerary.map(it => ({...it, uuid: it.uuid || ('it' + Date.now() + Math.random())}));
+      renderItinerary();
+      saveItineraryToLocal();
+    } catch(err){ alert('Invalid JSON file'); }
+  };
+  reader.readAsText(file);
+}
+
+/* ----- UI bindings ----- */
+document.getElementById('searchBtn').addEventListener('click', doSearch);
+qEl.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+document.getElementById('clearIt').addEventListener('click', ()=>{ if (!confirm('Clear itinerary?')) return; itinerary=[]; renderItinerary(); saveItineraryToLocal(); });
+document.getElementById('saveIt').addEventListener('click', ()=>{ saveItineraryToLocal(); alert('Itinerary saved locally'); });
+document.getElementById('loadIt').addEventListener('click', ()=>{ loadItineraryFromLocal(); });
+document.getElementById('exportIt').addEventListener('click', ()=>{ exportItinerary(); });
+const importBtn = document.getElementById('importBtn');
+const importFile = document.getElementById('importFile');
+importBtn.addEventListener('click', ()=> importFile.click());
+importFile.addEventListener('change', (e)=>{ if (e.target.files && e.target.files[0]) importItinerary(e.target.files[0]); });
+
+/* ----- initial state ----- */
+qEl.value = SAMPLE_CITY;
+doSearch(); // show sample city results
+renderItinerary();
+
+/* ----- minimal UX: double-click result to quick add ----- */
+resultsEl.addEventListener('dblclick', (e)=> {
+  let el = e.target;
+  while (el && !el.classList.contains('place')) el = el.parentElement;
+  if (!el) return;
+  const title = el.querySelector('h3').textContent;
+  const p = PLACES.find(x=>x.name === title);
+  if (p) addToItinerary(p.id);
+});
+
+/* ----- accessibility: keyboard shortcut S to save ----- */
+window.addEventListener('keydown', e=>{ if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's'){ e.preventDefault(); saveItineraryToLocal(); alert('Saved'); } });
+
+</script>
+
+</body>
+</html>
